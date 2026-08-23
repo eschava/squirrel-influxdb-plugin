@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>net.sourceforge.squirrel_sql.plugins</groupId>
+  <artifactId>influxdb-plugin</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+
+  <name>SQuirreL SQL Client InfluxDB Plugin</name>
+  <description>Adds InfluxDB (1.x/2.x, InfluxQL) support to the SQuirreL SQL Client.</description>
+
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+    <squirrel-sql-core.version>5.1.0</squirrel-sql-core.version>
+    <influxdb-jdbc.groupId>net.suteren.jdbc.influxdb</influxdb-jdbc.groupId>
+    <influxdb-jdbc.artifactId>influxdb-jdbc</influxdb-jdbc.artifactId>
+    <influxdb-jdbc.version>0.2.6</influxdb-jdbc.version>
+
+    <plugin-dist.dir>${project.build.directory}/plugin-dist</plugin-dist.dir>
+  </properties>
+
+  <dependencies>
+    <!-- SQuirreL SQL Client core API. Not on Maven Central - install locally first
+         with scripts/install-squirrel-core-jar.sh. Only needed at compile time; at
+         runtime the real squirrel-sql.jar supplies these classes. -->
+    <dependency>
+      <groupId>net.sourceforge.squirrel-sql</groupId>
+      <artifactId>squirrel-sql-core</artifactId>
+      <version>${squirrel-sql-core.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.11.3</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <version>5.14.2</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>influxdb</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.1</version>
+        <configuration>
+          <outputDirectory>${plugin-dist.dir}</outputDirectory>
+        </configuration>
+      </plugin>
+
+      <!-- Fetch the InfluxQL JDBC driver from Maven Central and place it next to the
+           plugin jar. It is never on our own compile/runtime classpath: SQuirreL loads
+           JDBC drivers itself via the path configured on the SQLDriver entry (see
+           InfluxDBDriverRegistrar), not via the plugin's classloader. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.7.1</version>
+        <executions>
+          <execution>
+            <id>copy-influxdb-driver</id>
+            <phase>package</phase>
+            <goals>
+              <goal>copy</goal>
+            </goals>
+            <configuration>
+              <artifactItems>
+                <artifactItem>
+                  <groupId>${influxdb-jdbc.groupId}</groupId>
+                  <artifactId>${influxdb-jdbc.artifactId}</artifactId>
+                  <version>${influxdb-jdbc.version}</version>
+                  <outputDirectory>${plugin-dist.dir}/influxdb/lib</outputDirectory>
+                  <destFileName>influxdb-jdbc-${influxdb-jdbc.version}.jar</destFileName>
+                </artifactItem>
+              </artifactItems>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- Patches a known bug in the bundled InfluxQL JDBC driver in place: upstream's
+           AbstractInfluxDbStatement.close() NPEs instead of surfacing the real error
+           whenever a query fails before its ResultSet is assigned (e.g. a timeout, or
+           a malformed query SQuirreL retried after) - see src/patches/jdbc-influxdb
+           and the patched source file's own comment for the full explanation. Must run
+           after copy-influxdb-driver, since it recompiles one class against that jar
+           and updates the same jar in place. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-antrun-plugin</artifactId>
+        <version>3.1.0</version>
+        <executions>
+          <execution>
+            <id>patch-influxdb-driver</id>
+            <phase>package</phase>
+            <goals>
+              <goal>run</goal>
+            </goals>
+            <configuration>
+              <target>
+                <mkdir dir="${project.build.directory}/patched-classes"/>
+                <javac srcdir="${project.basedir}/src/patches/jdbc-influxdb"
+                       destdir="${project.build.directory}/patched-classes"
+                       classpath="${plugin-dist.dir}/influxdb/lib/influxdb-jdbc-${influxdb-jdbc.version}.jar"
+                       release="17"
+                       includeantruntime="false"/>
+                <jar destfile="${plugin-dist.dir}/influxdb/lib/influxdb-jdbc-${influxdb-jdbc.version}.jar"
+                     basedir="${project.build.directory}/patched-classes"
+                     update="true"/>
+              </target>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-resources-plugin</artifactId>
+        <version>3.3.1</version>
+        <executions>
+          <execution>
+            <id>copy-doc</id>
+            <phase>package</phase>
+            <goals>
+              <goal>copy-resources</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${plugin-dist.dir}/influxdb/doc</outputDirectory>
+              <resources>
+                <resource>
+                  <directory>${project.basedir}</directory>
+                  <includes>
+                    <include>README.md</include>
+                  </includes>
+                </resource>
+              </resources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

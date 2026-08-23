@@ -1,0 +1,43 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # squirrel-sql-core isn't published on Maven Central (see
+      # scripts/install-squirrel-core-jar.sh) - for CI, pull squirrel-sql.jar out of the
+      # official 5.1.0 plain-zip release instead of requiring a local install.
+      - name: Install SQuirreL SQL Client core jar
+        run: |
+          curl -sL "https://sourceforge.net/projects/squirrel-sql/files/1-stable/5.1.0-plainzip/squirrelsql-5.1.0-base.zip/download" -o squirrelsql-base.zip
+          unzip -q squirrelsql-base.zip squirrelsql-5.1.0-base/squirrel-sql.jar
+          mvn install:install-file \
+            -Dfile=squirrelsql-5.1.0-base/squirrel-sql.jar \
+            -DgroupId=net.sourceforge.squirrel-sql \
+            -DartifactId=squirrel-sql-core \
+            -Dversion=5.1.0 \
+            -Dpackaging=jar
+
+      - name: Build and test
+        run: mvn -B package
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: influxdb-plugin
+          path: target/plugin-dist/
